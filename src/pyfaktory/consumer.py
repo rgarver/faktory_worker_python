@@ -10,6 +10,7 @@ from typing import Callable, Dict, List, Optional
 from pebble import ProcessPool, sighandler
 
 from .client import Client
+from .job import Job
 from .util import constants as C
 from .util import helper
 from .util.enums import State
@@ -104,7 +105,7 @@ class Consumer:
     def handle_sigterm(*_):
         raise KeyboardInterrupt
 
-    def register(self, name: str, fn: Callable):
+    def register(self, name: str, fn: (Callable | type[Job])) -> None:
         """
         Register a handler for the given jobtype.
 
@@ -114,9 +115,13 @@ class Consumer:
         self.job_handlers[name] = fn
         self.logger.info(f"Registered handler for jobtype: {name}")
 
-    def get_job_handler(self, name: str) -> Callable:
+    def get_job_handler(self, job: dict) -> Callable:
         try:
-            return self.job_handlers[name]
+            handler = self.job_handlers[job.get("jobtype")]
+            if issubclass(handler, Job):
+                return handler(job).perform
+            else:
+                return handler
         except KeyError:
             self.logger.error(f"'{name}' is not a registered job handler")
             # One could consider just failing the job and continue running,
@@ -200,7 +205,7 @@ class Consumer:
                     if job:
                         # TODO: check
                         # timeout=job.get('reserve_for', None)
-                        job_handler = self.get_job_handler(job.get("jobtype"))
+                        job_handler = self.get_job_handler(job)
 
                         future = self.pool.schedule(job_handler, args=job.get("args"))
 
